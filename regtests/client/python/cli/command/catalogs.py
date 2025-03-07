@@ -51,12 +51,15 @@ class CatalogsCommand(Command):
     role_arn: str
     external_id: str
     user_arn: str
+    region: str
     tenant_id: str
     multi_tenant_app_name: str
     consent_url: str
     service_account: str
     catalog_name: str
     properties: Dict[str, StrictStr]
+    set_properties: Dict[str, StrictStr]
+    remove_properties: List[str]
 
     def validate(self):
         if self.catalogs_subcommand == Subcommands.CREATE:
@@ -66,11 +69,6 @@ class CatalogsCommand(Command):
             if not self.default_base_location:
                 raise Exception(f'Missing required argument:'
                                 f' {Argument.to_flag_name(Arguments.DEFAULT_BASE_LOCATION)}')
-        if self.catalogs_subcommand == Subcommands.UPDATE:
-            if self.allowed_locations:
-                if not self.storage_type:
-                    raise Exception(f'Missing required argument when updating allowed locations for a catalog:'
-                                    f' {Argument.to_flag_name(Arguments.STORAGE_TYPE)}')
 
         if self.storage_type == StorageType.S3.value:
             if not self.role_arn:
@@ -79,6 +77,7 @@ class CatalogsCommand(Command):
             if self._has_azure_storage_info() or self._has_gcs_storage_info():
                 raise Exception(f"Storage type 's3' supports the storage credentials"
                                 f" {Argument.to_flag_name(Arguments.ROLE_ARN)},"
+                                f" {Argument.to_flag_name(Arguments.REGION)},"
                                 f" {Argument.to_flag_name(Arguments.EXTERNAL_ID)}, and"
                                 f" {Argument.to_flag_name(Arguments.USER_ARN)}")
         elif self.storage_type == StorageType.AZURE.value:
@@ -99,7 +98,7 @@ class CatalogsCommand(Command):
                 raise Exception("Storage type 'file' does not support any storage credentials")
 
     def _has_aws_storage_info(self):
-        return self.role_arn or self.external_id or self.user_arn
+        return self.role_arn or self.external_id or self.user_arn or self.region
 
     def _has_azure_storage_info(self):
         return self.tenant_id or self.multi_tenant_app_name or self.consent_url
@@ -115,7 +114,8 @@ class CatalogsCommand(Command):
                 allowed_locations=self.allowed_locations,
                 role_arn=self.role_arn,
                 external_id=self.external_id,
-                user_arn=self.user_arn
+                user_arn=self.user_arn,
+                region=self.region
             )
         elif self.storage_type == StorageType.AZURE.value:
             config = AzureStorageConfigInfo(
@@ -176,24 +176,58 @@ class CatalogsCommand(Command):
                 print(catalog.to_json())
         elif self.catalogs_subcommand == Subcommands.UPDATE:
             catalog = api.get_catalog(self.catalog_name)
-            if self.default_base_location or self.properties:
+
+            if self.default_base_location or self.set_properties or self.remove_properties:
+                new_default_base_location = self.default_base_location or catalog.properties.default_base_location
+                new_additional_properties = catalog.properties.additional_properties or {}
+
+                # Add or update all entries specified in set_properties
+                if self.set_properties:
+                    new_additional_properties = {**new_additional_properties, **self.set_properties}
+
+                # Remove all keys specified in remove_properties
+                if self.remove_properties:
+                    for to_remove in self.remove_properties:
+                        new_additional_properties.pop(to_remove, None)
+
                 catalog.properties = CatalogProperties(
-                    default_base_location=self.default_base_location,
-                    additional_properties=self.properties
+                    default_base_location=new_default_base_location,
+                    additional_properties=new_additional_properties
                 )
-            request = UpdateCatalogRequest(
-                current_entity_version=catalog.entity_version,
-                catalog=catalog
-            )
-            if (self._has_aws_storage_info() or self._has_azure_storage_info() or self._has_gcs_storage_info() or
-                    self.allowed_locations or self.default_base_location):
+
+            if (self._has_aws_storage_info() or self._has_azure_storage_info() or
+                self._has_gcs_storage_info() or self.allowed_locations):
+                # We must first reconstitute local storage-config related settings from the existing
+                # catalog to properly construct the complete updated storage-config
+                updated_storage_info = catalog.storage_config_info
+
+                # In order to apply mutations client-side, we can't just use the base
+                # _build_storage_config_info helper; instead, each allowed updatable field defined
+                # in option_tree.py should be applied individually against the existing
+                # storage_config_info here.
+                if self.allowed_locations:
+                    updated_storage_info.allowed_locations.extend(self.allowed_locations)
+
+                if self.region:
+                    # Note: We have to lowercase the returned value because the server enum
+                    # is uppercase but we defined the StorageType enums as lowercase.
+                    storage_type = updated_storage_info.storage_type
+                    if storage_type.lower() != StorageType.S3.value:
+                        raise Exception(
+                            f'--region requires S3 storage_type, got: {storage_type}')
+                    updated_storage_info.region = self.region
+
                 request = UpdateCatalogRequest(
                     current_entity_version=catalog.entity_version,
-                    catalog=catalog,
-                    storage_config_info=self._build_storage_config_info()
+                    properties=catalog.properties.to_dict(),
+                    storage_config_info=updated_storage_info
+                )
+            else:
+                request = UpdateCatalogRequest(
+                    current_entity_version=catalog.entity_version,
+                    properties=catalog.properties.to_dict()
                 )
 
             api.update_catalog(self.catalog_name, request)
         else:
             raise Exception(f'{self.catalogs_subcommand} is not supported in the CLI')
-

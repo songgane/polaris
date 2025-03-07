@@ -18,6 +18,8 @@
  */
 package org.apache.polaris.core.persistence;
 
+import static org.apache.polaris.core.persistence.PrincipalSecretsGenerator.RANDOM_SECRETS;
+
 import java.util.List;
 import java.util.stream.Collectors;
 import org.apache.polaris.core.PolarisCallContext;
@@ -30,8 +32,11 @@ import org.apache.polaris.core.entity.PolarisGrantRecord;
 import org.apache.polaris.core.entity.PolarisPrivilege;
 import org.apache.polaris.core.persistence.cache.EntityCache;
 import org.apache.polaris.core.persistence.cache.EntityCacheByNameKey;
-import org.apache.polaris.core.persistence.cache.EntityCacheEntry;
 import org.apache.polaris.core.persistence.cache.EntityCacheLookupResult;
+import org.apache.polaris.core.persistence.transactional.PolarisMetaStoreManagerImpl;
+import org.apache.polaris.core.persistence.transactional.PolarisTreeMapMetaStoreSessionImpl;
+import org.apache.polaris.core.persistence.transactional.PolarisTreeMapStore;
+import org.apache.polaris.core.persistence.transactional.TransactionalPersistence;
 import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -46,7 +51,7 @@ public class EntityCacheTest {
   private final PolarisTreeMapStore store;
 
   // to interact with the metastore
-  private final PolarisMetaStoreSession metaStore;
+  private final TransactionalPersistence metaStore;
 
   // polaris call context
   private final PolarisCallContext callCtx;
@@ -82,7 +87,7 @@ public class EntityCacheTest {
   public EntityCacheTest() {
     diagServices = new PolarisDefaultDiagServiceImpl();
     store = new PolarisTreeMapStore(diagServices);
-    metaStore = new PolarisTreeMapMetaStoreSessionImpl(store, Mockito.mock());
+    metaStore = new PolarisTreeMapMetaStoreSessionImpl(store, Mockito.mock(), RANDOM_SECRETS);
     callCtx = new PolarisCallContext(metaStore, diagServices);
     metaStoreManager = new PolarisMetaStoreManagerImpl();
 
@@ -124,7 +129,9 @@ public class EntityCacheTest {
     Assertions.assertThat(lookup.isCacheHit()).isTrue();
 
     // do it again by id, should be found in the cache
-    lookup = cache.getOrLoadEntityById(this.callCtx, catalog.getCatalogId(), catalog.getId());
+    lookup =
+        cache.getOrLoadEntityById(
+            this.callCtx, catalog.getCatalogId(), catalog.getId(), catalog.getType());
     Assertions.assertThat(lookup).isNotNull();
     Assertions.assertThat(lookup.isCacheHit()).isTrue();
     Assertions.assertThat(lookup.getCacheEntry()).isNotNull();
@@ -139,11 +146,11 @@ public class EntityCacheTest {
     EntityCacheByNameKey N1_name =
         new EntityCacheByNameKey(
             catalog.getId(), catalog.getId(), PolarisEntityType.NAMESPACE, "N1");
-    EntityCacheEntry cacheEntry = cache.getEntityByName(N1_name);
+    ResolvedPolarisEntity cacheEntry = cache.getEntityByName(N1_name);
     Assertions.assertThat(cacheEntry).isNull();
 
     // try to find it in the cache by id. Should not be there, i.e. no cache hit
-    lookup = cache.getOrLoadEntityById(this.callCtx, N1.getCatalogId(), N1.getId());
+    lookup = cache.getOrLoadEntityById(this.callCtx, N1.getCatalogId(), N1.getId(), N1.getType());
     Assertions.assertThat(lookup).isNotNull();
     Assertions.assertThat(lookup.isCacheHit()).isFalse();
 
@@ -160,13 +167,13 @@ public class EntityCacheTest {
     Assertions.assertThat(cacheEntry.getGrantRecordsAsSecurable()).isNotNull();
 
     // lookup N1
-    EntityCacheEntry N1_entry = cache.getEntityById(N1.getId());
+    ResolvedPolarisEntity N1_entry = cache.getEntityById(N1.getId());
     Assertions.assertThat(N1_entry).isNotNull();
     Assertions.assertThat(N1_entry.getEntity()).isNotNull();
     Assertions.assertThat(N1_entry.getGrantRecordsAsSecurable()).isNotNull();
 
     // negative tests, load an entity which does not exist
-    lookup = cache.getOrLoadEntityById(this.callCtx, N1.getCatalogId(), 10000);
+    lookup = cache.getOrLoadEntityById(this.callCtx, N1.getCatalogId(), 10000, N1.getType());
     Assertions.assertThat(lookup).isNull();
     lookup =
         cache.getOrLoadEntityByName(
@@ -179,7 +186,7 @@ public class EntityCacheTest {
         new EntityCacheByNameKey(catalog.getId(), N1.getId(), PolarisEntityType.NAMESPACE, "N2");
     lookup = cache.getOrLoadEntityByName(callCtx, N2_name);
     Assertions.assertThat(lookup).isNotNull();
-    EntityCacheEntry cacheEntry_N1 = lookup.getCacheEntry();
+    ResolvedPolarisEntity cacheEntry_N1 = lookup.getCacheEntry();
     Assertions.assertThat(cacheEntry_N1).isNotNull();
     Assertions.assertThat(cacheEntry_N1.getEntity()).isNotNull();
     Assertions.assertThat(cacheEntry_N1.getGrantRecordsAsSecurable()).isNotNull();
@@ -190,7 +197,7 @@ public class EntityCacheTest {
             catalog.getId(), catalog.getId(), PolarisEntityType.CATALOG_ROLE, "R1");
     lookup = cache.getOrLoadEntityByName(callCtx, R1_name);
     Assertions.assertThat(lookup).isNotNull();
-    EntityCacheEntry cacheEntry_R1 = lookup.getCacheEntry();
+    ResolvedPolarisEntity cacheEntry_R1 = lookup.getCacheEntry();
     Assertions.assertThat(cacheEntry_R1).isNotNull();
     Assertions.assertThat(cacheEntry_R1.getEntity()).isNotNull();
     Assertions.assertThat(cacheEntry_R1.getGrantRecordsAsSecurable()).isNotNull();
@@ -234,7 +241,7 @@ public class EntityCacheTest {
         new EntityCacheByNameKey(PolarisEntityType.PRINCIPAL_ROLE, "PR1");
     lookup = cache.getOrLoadEntityByName(callCtx, PR1_name);
     Assertions.assertThat(lookup).isNotNull();
-    EntityCacheEntry cacheEntry_PR1 = lookup.getCacheEntry();
+    ResolvedPolarisEntity cacheEntry_PR1 = lookup.getCacheEntry();
     Assertions.assertThat(cacheEntry_PR1).isNotNull();
     Assertions.assertThat(cacheEntry_PR1.getEntity()).isNotNull();
     Assertions.assertThat(cacheEntry_PR1.getGrantRecordsAsSecurable()).isNotNull();
@@ -297,7 +304,7 @@ public class EntityCacheTest {
     Assertions.assertThat(T6v1).isNotNull();
 
     // that table is not in the cache
-    EntityCacheEntry cacheEntry = cache.getEntityById(T6v1.getId());
+    ResolvedPolarisEntity cacheEntry = cache.getEntityById(T6v1.getId());
     Assertions.assertThat(cacheEntry).isNull();
 
     // now load that table in the cache
@@ -424,14 +431,14 @@ public class EntityCacheTest {
 
     PolarisBaseEntity N1 =
         this.tm.ensureExistsByName(List.of(catalog), PolarisEntityType.NAMESPACE, "N1");
-    lookup = cache.getOrLoadEntityById(this.callCtx, N1.getCatalogId(), N1.getId());
+    lookup = cache.getOrLoadEntityById(this.callCtx, N1.getCatalogId(), N1.getId(), N1.getType());
     Assertions.assertThat(lookup).isNotNull();
 
     EntityCacheByNameKey T4_name =
         new EntityCacheByNameKey(N1.getCatalogId(), N1.getId(), PolarisEntityType.TABLE_LIKE, "T4");
     lookup = cache.getOrLoadEntityByName(callCtx, T4_name);
     Assertions.assertThat(lookup).isNotNull();
-    EntityCacheEntry cacheEntry_T4 = lookup.getCacheEntry();
+    ResolvedPolarisEntity cacheEntry_T4 = lookup.getCacheEntry();
     Assertions.assertThat(cacheEntry_T4).isNotNull();
     Assertions.assertThat(cacheEntry_T4.getEntity()).isNotNull();
     Assertions.assertThat(cacheEntry_T4.getGrantRecordsAsSecurable()).isNotNull();
@@ -446,13 +453,13 @@ public class EntityCacheTest {
             N1.getCatalogId(), N1.getId(), PolarisEntityType.TABLE_LIKE, "T4_renamed");
     lookup = cache.getOrLoadEntityByName(callCtx, T4_renamed);
     Assertions.assertThat(lookup).isNotNull();
-    EntityCacheEntry cacheEntry_T4_renamed = lookup.getCacheEntry();
+    ResolvedPolarisEntity cacheEntry_T4_renamed = lookup.getCacheEntry();
     Assertions.assertThat(cacheEntry_T4_renamed).isNotNull();
     PolarisBaseEntity T4_renamed_entity = cacheEntry_T4_renamed.getEntity();
 
     // new entry if lookup by id
     EntityCacheLookupResult lookupResult =
-        cache.getOrLoadEntityById(callCtx, T4.getCatalogId(), T4.getId());
+        cache.getOrLoadEntityById(callCtx, T4.getCatalogId(), T4.getId(), T4.getType());
     Assertions.assertThat(lookupResult).isNotNull();
     Assertions.assertThat(lookupResult.getCacheEntry()).isNotNull();
     Assertions.assertThat(lookupResult.getCacheEntry().getEntity().getName())

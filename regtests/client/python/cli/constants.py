@@ -16,6 +16,7 @@
 # specific language governing permissions and limitations
 # under the License.
 #
+import os
 from enum import Enum
 
 
@@ -58,6 +59,7 @@ class Commands:
     CATALOG_ROLES = 'catalog-roles'
     PRIVILEGES = 'privileges'
     NAMESPACES = 'namespaces'
+    PROFILES = 'profiles'
 
 
 class Subcommands:
@@ -78,6 +80,7 @@ class Subcommands:
     VIEW = 'view'
     GRANT = 'grant'
     REVOKE = 'revoke'
+    ACCESS = 'access'
 
 
 class Actions:
@@ -117,6 +120,8 @@ class Arguments:
     CLIENT_ID = 'client_id'
     PRINCIPAL_ROLE = 'principal_role'
     PROPERTY = 'property'
+    SET_PROPERTY = 'set_property'
+    REMOVE_PROPERTY = 'remove_property'
     PRIVILEGE = 'privilege'
     NAMESPACE = 'namespace'
     TABLE = 'table'
@@ -126,8 +131,12 @@ class Arguments:
     ACCESS_TOKEN = 'access_token'
     HOST = 'host'
     PORT = 'port'
+    BASE_URL = 'base_url'
     PARENT = 'parent'
     LOCATION = 'location'
+    REGION = 'region'
+    PROFILE = 'profile'
+    PROXY = 'proxy'
 
 
 class Hints:
@@ -139,6 +148,13 @@ class Hints:
 
     PROPERTY = ('A key/value pair such as: tag=value. Multiple can be provided by specifying this option'
                 ' more than once')
+    SET_PROPERTY = ('A key/value pair such as: tag=value. Merges the specified key/value into an existing'
+                    ' properties map by updating the value if the key already exists or creating a new'
+                    ' entry if not. Multiple can be provided by specifying this option more than once')
+    REMOVE_PROPERTY = ('A key to remove from a properties map. If the key already does not exist then'
+                       ' no action is takn for the specified key. If properties are also being set in'
+                       ' the same update command then the list of removals is applied last. Multiple'
+                       ' can be provided by specifying this option more than once')
 
     class Catalogs:
         GRANT = 'Grant a catalog role to a catalog'
@@ -154,6 +170,7 @@ class Hints:
 
             ROLE_ARN = '(Required for S3) A role ARN to use when connecting to S3'
             EXTERNAL_ID = '(Only for S3) The external ID to use when connecting to S3'
+            REGION = '(Only for S3) The region to use when connecting to S3'
             USER_ARN = '(Only for S3) A user ARN to use when connecting to S3'
 
             TENANT_ID = '(Required for Azure) A tenant ID to use when connecting to Azure Storage'
@@ -217,3 +234,10 @@ class Hints:
 UNIT_SEPARATOR = chr(0x1F)
 CLIENT_ID_ENV = 'CLIENT_ID'
 CLIENT_SECRET_ENV = 'CLIENT_SECRET'
+CLIENT_PROFILE_ENV = 'CLIENT_PROFILE'
+DEFAULT_HOSTNAME = 'localhost'
+DEFAULT_PORT = 8181
+CONFIG_DIR = os.environ.get('SCRIPT_DIR')
+if CONFIG_DIR is None:
+    raise Exception("The SCRIPT_DIR environment variable is not set. Please set it to the Polaris's script directory.")
+CONFIG_FILE = os.path.join(CONFIG_DIR, '.polaris.json')

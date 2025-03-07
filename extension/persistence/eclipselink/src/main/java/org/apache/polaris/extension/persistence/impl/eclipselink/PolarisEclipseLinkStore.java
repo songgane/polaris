@@ -18,6 +18,8 @@
  */
 package org.apache.polaris.extension.persistence.impl.eclipselink;
 
+import jakarta.annotation.Nonnull;
+import jakarta.annotation.Nullable;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.TypedQuery;
 import java.util.ArrayList;
@@ -25,22 +27,19 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 import org.apache.polaris.core.PolarisDiagnostics;
+import org.apache.polaris.core.entity.EntityNameLookupRecord;
 import org.apache.polaris.core.entity.PolarisBaseEntity;
 import org.apache.polaris.core.entity.PolarisEntitiesActiveKey;
-import org.apache.polaris.core.entity.PolarisEntityActiveRecord;
 import org.apache.polaris.core.entity.PolarisEntityCore;
 import org.apache.polaris.core.entity.PolarisEntityId;
 import org.apache.polaris.core.entity.PolarisEntityType;
 import org.apache.polaris.core.entity.PolarisGrantRecord;
 import org.apache.polaris.core.entity.PolarisPrincipalSecrets;
-import org.apache.polaris.core.persistence.models.ModelEntity;
-import org.apache.polaris.core.persistence.models.ModelEntityActive;
-import org.apache.polaris.core.persistence.models.ModelEntityChangeTracking;
-import org.apache.polaris.core.persistence.models.ModelEntityDropped;
-import org.apache.polaris.core.persistence.models.ModelGrantRecord;
-import org.apache.polaris.core.persistence.models.ModelPrincipalSecrets;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
+import org.apache.polaris.jpa.models.ModelEntity;
+import org.apache.polaris.jpa.models.ModelEntityActive;
+import org.apache.polaris.jpa.models.ModelEntityChangeTracking;
+import org.apache.polaris.jpa.models.ModelGrantRecord;
+import org.apache.polaris.jpa.models.ModelPrincipalSecrets;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -62,7 +61,7 @@ public class PolarisEclipseLinkStore {
    *
    * @param diagnostics diagnostic services
    */
-  public PolarisEclipseLinkStore(@NotNull PolarisDiagnostics diagnostics) {
+  public PolarisEclipseLinkStore(@Nonnull PolarisDiagnostics diagnostics) {
     this.diagnosticServices = diagnostics;
   }
 
@@ -100,18 +99,7 @@ public class PolarisEclipseLinkStore {
 
     ModelEntityActive model = lookupEntityActive(session, new PolarisEntitiesActiveKey(entity));
     if (model == null) {
-      session.persist(ModelEntityActive.fromEntityActive(new PolarisEntityActiveRecord(entity)));
-    }
-  }
-
-  void writeToEntitiesDropped(EntityManager session, PolarisBaseEntity entity) {
-    diagnosticServices.check(session != null, "session_is_null");
-    checkInitialized();
-
-    ModelEntityDropped entityDropped =
-        lookupEntityDropped(session, entity.getCatalogId(), entity.getId());
-    if (entityDropped == null) {
-      session.persist(ModelEntityDropped.fromEntity(entity));
+      session.persist(ModelEntityActive.fromEntityActive(new EntityNameLookupRecord(entity)));
     }
   }
 
@@ -155,16 +143,6 @@ public class PolarisEclipseLinkStore {
 
     ModelEntityActive entity = lookupEntityActive(session, key);
     diagnosticServices.check(entity != null, "active_entity_not_found");
-    session.remove(entity);
-  }
-
-  void deleteFromEntitiesDropped(EntityManager session, long catalogId, long entityId) {
-    diagnosticServices.check(session != null, "session_is_null");
-    checkInitialized();
-
-    ModelEntityDropped entity = lookupEntityDropped(session, catalogId, entityId);
-    diagnosticServices.check(entity != null, "dropped_entity_not_found");
-
     session.remove(entity);
   }
 
@@ -216,7 +194,6 @@ public class PolarisEclipseLinkStore {
 
     session.createQuery("DELETE from ModelEntity").executeUpdate();
     session.createQuery("DELETE from ModelEntityActive").executeUpdate();
-    session.createQuery("DELETE from ModelEntityDropped").executeUpdate();
     session.createQuery("DELETE from ModelEntityChangeTracking").executeUpdate();
     session.createQuery("DELETE from ModelGrantRecord").executeUpdate();
     session.createQuery("DELETE from ModelPrincipalSecrets").executeUpdate();
@@ -301,7 +278,7 @@ public class PolarisEclipseLinkStore {
   }
 
   List<ModelEntity> lookupFullEntitiesActive(
-      EntityManager session, long catalogId, long parentId, @NotNull PolarisEntityType entityType) {
+      EntityManager session, long catalogId, long parentId, @Nonnull PolarisEntityType entityType) {
     diagnosticServices.check(session != null, "session_is_null");
     checkInitialized();
 
@@ -317,21 +294,6 @@ public class PolarisEclipseLinkStore {
             .setParameter("typeCode", entityType.getCode());
 
     return query.getResultList();
-  }
-
-  ModelEntityDropped lookupEntityDropped(EntityManager session, long catalogId, long entityId) {
-    diagnosticServices.check(session != null, "session_is_null");
-    checkInitialized();
-
-    return session
-        .createQuery(
-            "SELECT m from ModelEntityDropped m where m.catalogId=:catalogId and m.id=:id",
-            ModelEntityDropped.class)
-        .setParameter("catalogId", catalogId)
-        .setParameter("id", entityId)
-        .getResultStream()
-        .findFirst()
-        .orElse(null);
   }
 
   ModelEntityChangeTracking lookupEntityChangeTracking(

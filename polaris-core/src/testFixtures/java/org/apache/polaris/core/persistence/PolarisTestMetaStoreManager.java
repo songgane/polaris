@@ -21,6 +21,7 @@ package org.apache.polaris.core.persistence;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.annotation.Nonnull;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -28,10 +29,11 @@ import java.util.Map;
 import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.polaris.core.PolarisCallContext;
+import org.apache.polaris.core.auth.PolarisGrantManager.LoadGrantsResult;
+import org.apache.polaris.core.entity.EntityNameLookupRecord;
 import org.apache.polaris.core.entity.PolarisBaseEntity;
 import org.apache.polaris.core.entity.PolarisChangeTrackingVersions;
 import org.apache.polaris.core.entity.PolarisEntity;
-import org.apache.polaris.core.entity.PolarisEntityActiveRecord;
 import org.apache.polaris.core.entity.PolarisEntityConstants;
 import org.apache.polaris.core.entity.PolarisEntityCore;
 import org.apache.polaris.core.entity.PolarisEntityId;
@@ -41,8 +43,13 @@ import org.apache.polaris.core.entity.PolarisGrantRecord;
 import org.apache.polaris.core.entity.PolarisPrincipalSecrets;
 import org.apache.polaris.core.entity.PolarisPrivilege;
 import org.apache.polaris.core.entity.PolarisTaskConstants;
+import org.apache.polaris.core.persistence.dao.entity.BaseResult;
+import org.apache.polaris.core.persistence.dao.entity.CreateCatalogResult;
+import org.apache.polaris.core.persistence.dao.entity.CreatePrincipalResult;
+import org.apache.polaris.core.persistence.dao.entity.DropEntityResult;
+import org.apache.polaris.core.persistence.dao.entity.EntityResult;
+import org.apache.polaris.core.persistence.dao.entity.ResolvedEntityResult;
 import org.assertj.core.api.Assertions;
-import org.jetbrains.annotations.NotNull;
 
 /** Test the Polaris persistence layer */
 public class PolarisTestMetaStoreManager {
@@ -111,7 +118,7 @@ public class PolarisTestMetaStoreManager {
     // make sure this entity was persisted
     PolarisBaseEntity entity =
         polarisMetaStoreManager
-            .loadEntity(this.polarisCallContext, catalogId, entityId)
+            .loadEntity(this.polarisCallContext, catalogId, entityId, expectedType)
             .getEntity();
 
     // assert all expected values
@@ -133,7 +140,7 @@ public class PolarisTestMetaStoreManager {
       Assertions.assertThat(entity.getPurgeTimestamp()).isEqualTo(0);
 
       // we should find it
-      PolarisMetaStoreManager.EntityResult result =
+      EntityResult result =
           polarisMetaStoreManager.readEntityByName(
               this.polarisCallContext, catalogPath, expectedType, expectedSubType, expectedName);
 
@@ -150,7 +157,7 @@ public class PolarisTestMetaStoreManager {
       Assertions.assertThat(entity.getDropTimestamp()).isNotZero();
 
       // we should not find it
-      PolarisMetaStoreManager.EntityResult result =
+      EntityResult result =
           polarisMetaStoreManager.readEntityByName(
               this.polarisCallContext, catalogPath, expectedType, expectedSubType, expectedName);
 
@@ -242,12 +249,17 @@ public class PolarisTestMetaStoreManager {
     // re-load both entities, ensure not null
     securable =
         polarisMetaStoreManager
-            .loadEntity(this.polarisCallContext, securable.getCatalogId(), securable.getId())
+            .loadEntity(
+                this.polarisCallContext,
+                securable.getCatalogId(),
+                securable.getId(),
+                securable.getType())
             .getEntity();
     Assertions.assertThat(securable).isNotNull();
     grantee =
         polarisMetaStoreManager
-            .loadEntity(this.polarisCallContext, grantee.getCatalogId(), grantee.getId())
+            .loadEntity(
+                this.polarisCallContext, grantee.getCatalogId(), grantee.getId(), grantee.getType())
             .getEntity();
     Assertions.assertThat(grantee).isNotNull();
 
@@ -255,7 +267,7 @@ public class PolarisTestMetaStoreManager {
     Assertions.assertThat(grantee.getType().isGrantee()).isTrue();
 
     // load all grant records on that securable, should not fail
-    PolarisMetaStoreManager.LoadGrantsResult loadGrantsOnSecurable =
+    LoadGrantsResult loadGrantsOnSecurable =
         polarisMetaStoreManager.loadGrantsOnSecurable(
             this.polarisCallContext, securable.getCatalogId(), securable.getId());
     // ensure entities for these grant records have been properly loaded
@@ -265,7 +277,7 @@ public class PolarisTestMetaStoreManager {
     this.checkGrantRecordExists(loadGrantsOnSecurable.getGrantRecords(), securable, grantee, priv);
 
     // load all grant records on that grantee, should not fail
-    PolarisMetaStoreManager.LoadGrantsResult loadGrantsOnGrantee =
+    LoadGrantsResult loadGrantsOnGrantee =
         polarisMetaStoreManager.loadGrantsToGrantee(
             this.polarisCallContext, grantee.getCatalogId(), grantee.getId());
     // ensure entities for these grant records have been properly loaded
@@ -282,8 +294,7 @@ public class PolarisTestMetaStoreManager {
    * @param isGrantee if true, loadGrantsToGrantee() was called, else loadGrantsOnSecurable() was
    *     called
    */
-  private void validateLoadedGrants(
-      PolarisMetaStoreManager.LoadGrantsResult loadGrantRecords, boolean isGrantee) {
+  private void validateLoadedGrants(LoadGrantsResult loadGrantRecords, boolean isGrantee) {
     // ensure not null
     Assertions.assertThat(loadGrantRecords).isNotNull();
 
@@ -299,10 +310,15 @@ public class PolarisTestMetaStoreManager {
       long entityId = isGrantee ? grantRecord.getSecurableId() : grantRecord.getGranteeId();
 
       // load that entity
-      PolarisBaseEntity entity =
-          polarisMetaStoreManager
-              .loadEntity(this.polarisCallContext, catalogId, entityId)
-              .getEntity();
+      PolarisBaseEntity entity = null;
+      for (PolarisEntityType type : PolarisEntityType.values()) {
+        EntityResult entityResult =
+            polarisMetaStoreManager.loadEntity(this.polarisCallContext, catalogId, entityId, type);
+        if (entityResult.isSuccess()) {
+          entity = entityResult.getEntity();
+          break;
+        }
+      }
       Assertions.assertThat(entity).isNotNull();
       Assertions.assertThat(entities.get(entityId)).isEqualTo(entity);
     }
@@ -320,12 +336,17 @@ public class PolarisTestMetaStoreManager {
     // re-load both entities, ensure not null
     securable =
         polarisMetaStoreManager
-            .loadEntity(this.polarisCallContext, securable.getCatalogId(), securable.getId())
+            .loadEntity(
+                this.polarisCallContext,
+                securable.getCatalogId(),
+                securable.getId(),
+                securable.getType())
             .getEntity();
     Assertions.assertThat(securable).isNotNull();
     grantee =
         polarisMetaStoreManager
-            .loadEntity(this.polarisCallContext, grantee.getCatalogId(), grantee.getId())
+            .loadEntity(
+                this.polarisCallContext, grantee.getCatalogId(), grantee.getId(), grantee.getType())
             .getEntity();
     Assertions.assertThat(grantee).isNotNull();
 
@@ -333,7 +354,7 @@ public class PolarisTestMetaStoreManager {
     Assertions.assertThat(grantee.getType().isGrantee()).isTrue();
 
     // load all grant records on that securable, should not fail
-    PolarisMetaStoreManager.LoadGrantsResult loadGrantsOnSecurable =
+    LoadGrantsResult loadGrantsOnSecurable =
         polarisMetaStoreManager.loadGrantsOnSecurable(
             this.polarisCallContext, securable.getCatalogId(), securable.getId());
     // ensure entities for these grant records have been properly loaded
@@ -343,7 +364,7 @@ public class PolarisTestMetaStoreManager {
     this.checkGrantRecordRemoved(loadGrantsOnSecurable.getGrantRecords(), securable, grantee, priv);
 
     // load all grant records on that grantee, should not fail
-    PolarisMetaStoreManager.LoadGrantsResult loadGrantsOnGrantee =
+    LoadGrantsResult loadGrantsOnGrantee =
         polarisMetaStoreManager.loadGrantsToGrantee(
             this.polarisCallContext, grantee.getCatalogId(), grantee.getId());
     this.validateLoadedGrants(loadGrantsOnGrantee, true);
@@ -367,7 +388,7 @@ public class PolarisTestMetaStoreManager {
         PolarisObjectMapperUtil.serializeProperties(
             this.polarisCallContext,
             Map.of(PolarisEntityConstants.PRINCIPAL_CREDENTIAL_ROTATION_REQUIRED_STATE, "true")));
-    PolarisMetaStoreManager.CreatePrincipalResult createPrincipalResult =
+    CreatePrincipalResult createPrincipalResult =
         polarisMetaStoreManager.createPrincipal(this.polarisCallContext, principalEntity);
     Assertions.assertThat(createPrincipalResult).isNotNull();
 
@@ -402,9 +423,9 @@ public class PolarisTestMetaStoreManager {
     Assertions.assertThat(reloadSecrets.getPrincipalId()).isEqualTo(secrets.getPrincipalId());
     Assertions.assertThat(reloadSecrets.getPrincipalClientId())
         .isEqualTo(secrets.getPrincipalClientId());
-    Assertions.assertThat(reloadSecrets.getMainSecret()).isEqualTo(secrets.getMainSecret());
-    Assertions.assertThat(reloadSecrets.getSecondarySecret())
-        .isEqualTo(secrets.getSecondarySecret());
+    Assertions.assertThat(reloadSecrets.getMainSecretHash()).isEqualTo(secrets.getMainSecretHash());
+    Assertions.assertThat(reloadSecrets.getSecondarySecretHash())
+        .isEqualTo(secrets.getSecondarySecretHash());
 
     Map<String, String> internalProperties =
         PolarisObjectMapperUtil.deserializeProperties(
@@ -417,7 +438,7 @@ public class PolarisTestMetaStoreManager {
     // simulate retry if we are asked to
     if (this.doRetry) {
       // simulate that we retried
-      PolarisMetaStoreManager.CreatePrincipalResult newCreatePrincipalResult =
+      CreatePrincipalResult newCreatePrincipalResult =
           polarisMetaStoreManager.createPrincipal(this.polarisCallContext, principalEntity);
       Assertions.assertThat(newCreatePrincipalResult).isNotNull();
 
@@ -428,8 +449,8 @@ public class PolarisTestMetaStoreManager {
       Assertions.assertThat(newSecrets.getPrincipalId()).isEqualTo(secrets.getPrincipalId());
       Assertions.assertThat(newSecrets.getPrincipalClientId())
           .isEqualTo(secrets.getPrincipalClientId());
-      Assertions.assertThat(newSecrets.getMainSecret()).isEqualTo(secrets.getMainSecret());
-      Assertions.assertThat(newSecrets.getMainSecret()).isEqualTo(secrets.getMainSecret());
+      Assertions.assertThat(newSecrets.getMainSecretHash()).isEqualTo(secrets.getMainSecretHash());
+      Assertions.assertThat(newSecrets.getMainSecretHash()).isEqualTo(secrets.getMainSecretHash());
     }
 
     secrets =
@@ -438,14 +459,18 @@ public class PolarisTestMetaStoreManager {
                 this.polarisCallContext,
                 clientId,
                 principalEntity.getId(),
-                secrets.getMainSecret(),
-                false)
+                false,
+                secrets.getMainSecretHash())
             .getPrincipalSecrets();
     Assertions.assertThat(secrets.getMainSecret()).isNotEqualTo(reloadSecrets.getMainSecret());
 
     PolarisBaseEntity reloadPrincipal =
         polarisMetaStoreManager
-            .loadEntity(this.polarisCallContext, 0L, createPrincipalResult.getPrincipal().getId())
+            .loadEntity(
+                this.polarisCallContext,
+                0L,
+                createPrincipalResult.getPrincipal().getId(),
+                createPrincipalResult.getPrincipal().getType())
             .getEntity();
     internalProperties =
         PolarisObjectMapperUtil.deserializeProperties(
@@ -457,9 +482,17 @@ public class PolarisTestMetaStoreManager {
 
     // rotate the secrets, twice!
     polarisMetaStoreManager.rotatePrincipalSecrets(
-        this.polarisCallContext, clientId, principalEntity.getId(), secrets.getMainSecret(), false);
+        this.polarisCallContext,
+        clientId,
+        principalEntity.getId(),
+        false,
+        secrets.getMainSecretHash());
     polarisMetaStoreManager.rotatePrincipalSecrets(
-        this.polarisCallContext, clientId, principalEntity.getId(), secrets.getMainSecret(), false);
+        this.polarisCallContext,
+        clientId,
+        principalEntity.getId(),
+        false,
+        secrets.getMainSecretHash());
 
     // reload and check that now the main should be secondary
     reloadSecrets =
@@ -470,16 +503,17 @@ public class PolarisTestMetaStoreManager {
     Assertions.assertThat(reloadSecrets.getPrincipalId()).isEqualTo(secrets.getPrincipalId());
     Assertions.assertThat(reloadSecrets.getPrincipalClientId())
         .isEqualTo(secrets.getPrincipalClientId());
-    Assertions.assertThat(reloadSecrets.getSecondarySecret()).isEqualTo(secrets.getMainSecret());
-    String newMainSecret = reloadSecrets.getMainSecret();
+    Assertions.assertThat(reloadSecrets.getSecondarySecretHash())
+        .isEqualTo(secrets.getMainSecretHash());
+    String newMainSecretHash = reloadSecrets.getMainSecretHash();
 
     // reset - the previous main secret is no longer one of the secrets
     polarisMetaStoreManager.rotatePrincipalSecrets(
         this.polarisCallContext,
         clientId,
         principalEntity.getId(),
-        reloadSecrets.getMainSecret(),
-        true);
+        true,
+        reloadSecrets.getMainSecretHash());
     reloadSecrets =
         polarisMetaStoreManager
             .loadPrincipalSecrets(this.polarisCallContext, clientId)
@@ -488,12 +522,13 @@ public class PolarisTestMetaStoreManager {
     Assertions.assertThat(reloadSecrets.getPrincipalId()).isEqualTo(secrets.getPrincipalId());
     Assertions.assertThat(reloadSecrets.getPrincipalClientId())
         .isEqualTo(secrets.getPrincipalClientId());
-    Assertions.assertThat(reloadSecrets.getMainSecret()).isNotEqualTo(newMainSecret);
-    Assertions.assertThat(reloadSecrets.getSecondarySecret()).isNotEqualTo(newMainSecret);
+    Assertions.assertThat(reloadSecrets.getMainSecretHash()).isNotEqualTo(newMainSecretHash);
+    Assertions.assertThat(reloadSecrets.getSecondarySecretHash()).isNotEqualTo(newMainSecretHash);
 
     PolarisBaseEntity newPrincipal =
         polarisMetaStoreManager
-            .loadEntity(this.polarisCallContext, 0L, principalEntity.getId())
+            .loadEntity(
+                this.polarisCallContext, 0L, principalEntity.getId(), principalEntity.getType())
             .getEntity();
     internalProperties =
         PolarisObjectMapperUtil.deserializeProperties(
@@ -509,8 +544,8 @@ public class PolarisTestMetaStoreManager {
         this.polarisCallContext,
         clientId,
         principalEntity.getId(),
-        reloadSecrets.getMainSecret(),
-        true);
+        true,
+        reloadSecrets.getMainSecretHash());
     PolarisPrincipalSecrets postResetCredentials =
         polarisMetaStoreManager
             .loadPrincipalSecrets(this.polarisCallContext, clientId)
@@ -520,14 +555,15 @@ public class PolarisTestMetaStoreManager {
         .isEqualTo(reloadSecrets.getPrincipalId());
     Assertions.assertThat(postResetCredentials.getPrincipalClientId())
         .isEqualTo(reloadSecrets.getPrincipalClientId());
-    Assertions.assertThat(postResetCredentials.getMainSecret())
-        .isNotEqualTo(reloadSecrets.getMainSecret());
-    Assertions.assertThat(postResetCredentials.getSecondarySecret())
-        .isNotEqualTo(reloadSecrets.getSecondarySecret());
+    Assertions.assertThat(postResetCredentials.getMainSecretHash())
+        .isNotEqualTo(reloadSecrets.getMainSecretHash());
+    Assertions.assertThat(postResetCredentials.getSecondarySecretHash())
+        .isNotEqualTo(reloadSecrets.getSecondarySecretHash());
 
     PolarisBaseEntity finalPrincipal =
         polarisMetaStoreManager
-            .loadEntity(this.polarisCallContext, 0L, principalEntity.getId())
+            .loadEntity(
+                this.polarisCallContext, 0L, principalEntity.getId(), principalEntity.getType())
             .getEntity();
     internalProperties =
         PolarisObjectMapperUtil.deserializeProperties(
@@ -623,10 +659,14 @@ public class PolarisTestMetaStoreManager {
     // check if it exists
     PolarisBaseEntity entity =
         polarisMetaStoreManager
-            .loadEntity(this.polarisCallContext, entityToDrop.getCatalogId(), entityToDrop.getId())
+            .loadEntity(
+                this.polarisCallContext,
+                entityToDrop.getCatalogId(),
+                entityToDrop.getId(),
+                entityToDrop.getType())
             .getEntity();
     if (entity != null) {
-      PolarisMetaStoreManager.EntityResult entityFound =
+      EntityResult entityFound =
           polarisMetaStoreManager.readEntityByName(
               this.polarisCallContext,
               catalogPath,
@@ -647,7 +687,7 @@ public class PolarisTestMetaStoreManager {
         path.add(entityToDrop);
 
         // get all children, cannot be null
-        List<PolarisEntityActiveRecord> children =
+        List<EntityNameLookupRecord> children =
             polarisMetaStoreManager
                 .listEntities(
                     this.polarisCallContext,
@@ -711,7 +751,7 @@ public class PolarisTestMetaStoreManager {
     // now drop it
     Map<String, String> cleanupProperties =
         Map.of("taskId", String.valueOf(entity.getId()), "cleanupProperty", "cleanupValue");
-    PolarisMetaStoreManager.DropEntityResult dropResult =
+    DropEntityResult dropResult =
         polarisMetaStoreManager.dropEntityIfExists(
             this.polarisCallContext, catalogPath, entityToDrop, cleanupProperties, true);
 
@@ -731,7 +771,11 @@ public class PolarisTestMetaStoreManager {
       Assertions.assertThat(dropResult.getCleanupTaskId()).isNotNull();
       PolarisBaseEntity cleanupTask =
           polarisMetaStoreManager
-              .loadEntity(this.polarisCallContext, 0L, dropResult.getCleanupTaskId())
+              .loadEntity(
+                  this.polarisCallContext,
+                  0L,
+                  dropResult.getCleanupTaskId(),
+                  PolarisEntityType.TASK)
               .getEntity();
       Assertions.assertThat(cleanupTask).isNotNull();
       Assertions.assertThat(cleanupTask.getType()).isEqualTo(PolarisEntityType.TASK);
@@ -760,7 +804,10 @@ public class PolarisTestMetaStoreManager {
       PolarisBaseEntity entityAfterDrop =
           polarisMetaStoreManager
               .loadEntity(
-                  this.polarisCallContext, entityToDrop.getCatalogId(), entityToDrop.getId())
+                  this.polarisCallContext,
+                  entityToDrop.getCatalogId(),
+                  entityToDrop.getId(),
+                  entityToDrop.getType())
               .getEntity();
 
       // ensure dropped
@@ -768,7 +815,7 @@ public class PolarisTestMetaStoreManager {
 
       // should no longer exists
       Assertions.assertThat(entity).isNotNull();
-      PolarisMetaStoreManager.EntityResult entityFound =
+      EntityResult entityFound =
           polarisMetaStoreManager.readEntityByName(
               this.polarisCallContext,
               catalogPath,
@@ -778,12 +825,12 @@ public class PolarisTestMetaStoreManager {
 
       // should not be found
       Assertions.assertThat(entityFound.getReturnStatus())
-          .isEqualTo(PolarisMetaStoreManager.ReturnStatus.ENTITY_NOT_FOUND);
+          .isEqualTo(BaseResult.ReturnStatus.ENTITY_NOT_FOUND);
 
       // make sure that the entity which was dropped is no longer referenced by a grant with any
       // of the entity it was connected with before being dropped
       for (PolarisBaseEntity connectedEntity : granteeEntities) {
-        PolarisMetaStoreManager.LoadGrantsResult grantResult =
+        LoadGrantsResult grantResult =
             polarisMetaStoreManager.loadGrantsToGrantee(
                 this.polarisCallContext, connectedEntity.getCatalogId(), connectedEntity.getId());
         if (grantResult.isSuccess()) {
@@ -795,8 +842,7 @@ public class PolarisTestMetaStoreManager {
         } else {
           // special case when a catalog is dropped, the catalog_admin role is also dropped with it
           Assertions.assertThat(
-                  grantResult.getReturnStatus()
-                          == PolarisMetaStoreManager.ReturnStatus.ENTITY_NOT_FOUND
+                  grantResult.getReturnStatus() == BaseResult.ReturnStatus.ENTITY_NOT_FOUND
                       && entityToDrop.getType() == PolarisEntityType.CATALOG
                       && connectedEntity.getType() == PolarisEntityType.CATALOG_ROLE
                       && connectedEntity
@@ -806,7 +852,7 @@ public class PolarisTestMetaStoreManager {
         }
       }
       for (PolarisBaseEntity connectedEntity : securableEntities) {
-        PolarisMetaStoreManager.LoadGrantsResult grantResult =
+        LoadGrantsResult grantResult =
             polarisMetaStoreManager.loadGrantsOnSecurable(
                 this.polarisCallContext, connectedEntity.getCatalogId(), connectedEntity.getId());
         long cnt =
@@ -907,7 +953,7 @@ public class PolarisTestMetaStoreManager {
             PolarisEntitySubType.NULL_SUBTYPE,
             PolarisEntityConstants.getRootEntityId(),
             catalogName);
-    PolarisMetaStoreManager.CreateCatalogResult catalogCreated =
+    CreateCatalogResult catalogCreated =
         polarisMetaStoreManager.createCatalog(this.polarisCallContext, catalog, List.of());
     Assertions.assertThat(catalogCreated).isNotNull();
     catalog = catalogCreated.getCatalog();
@@ -1003,7 +1049,7 @@ public class PolarisTestMetaStoreManager {
       PolarisEntitySubType entitySubType,
       String name) {
     // find by name, ensure we found it
-    PolarisMetaStoreManager.EntityResult entityFound =
+    EntityResult entityFound =
         polarisMetaStoreManager.readEntityByName(
             this.polarisCallContext, catalogPath, entityType, entitySubType, name);
     Assertions.assertThat(entityFound).isNotNull();
@@ -1079,7 +1125,8 @@ public class PolarisTestMetaStoreManager {
     // lookup that entity, ensure it exists
     PolarisBaseEntity beforeUpdateEntity =
         polarisMetaStoreManager
-            .loadEntity(this.polarisCallContext, entity.getCatalogId(), entity.getId())
+            .loadEntity(
+                this.polarisCallContext, entity.getCatalogId(), entity.getId(), entity.getType())
             .getEntity();
 
     // update that property
@@ -1096,7 +1143,8 @@ public class PolarisTestMetaStoreManager {
       // refresh catalog info
       entity =
           polarisMetaStoreManager
-              .loadEntity(this.polarisCallContext, entity.getCatalogId(), entity.getId())
+              .loadEntity(
+                  this.polarisCallContext, entity.getCatalogId(), entity.getId(), entity.getType())
               .getEntity();
 
       // ensure nothing has changed
@@ -1180,7 +1228,7 @@ public class PolarisTestMetaStoreManager {
       List<ImmutablePair<String, PolarisEntitySubType>> expectedResult) {
 
     // list the entities under the specified path
-    List<PolarisEntityActiveRecord> result =
+    List<EntityNameLookupRecord> result =
         polarisMetaStoreManager
             .listEntities(this.polarisCallContext, path, entityType, entitySubType)
             .getEntities();
@@ -1192,7 +1240,7 @@ public class PolarisTestMetaStoreManager {
     // ensure all elements are found
     for (Pair<String, PolarisEntitySubType> expected : expectedResult) {
       boolean found = false;
-      for (PolarisEntityActiveRecord res : result) {
+      for (EntityNameLookupRecord res : result) {
         if (res.getName().equals(expected.getLeft())
             && expected.getRight().getCode() == res.getSubTypeCode()) {
           found = true;
@@ -1217,7 +1265,7 @@ public class PolarisTestMetaStoreManager {
    *
    * @param cacheEntry the cached entity to validate
    */
-  private void validateCacheEntryLoad(PolarisMetaStoreManager.CachedEntryResult cacheEntry) {
+  private void validateCacheEntryLoad(ResolvedEntityResult cacheEntry) {
 
     // cannot be null
     Assertions.assertThat(cacheEntry).isNotNull();
@@ -1234,7 +1282,7 @@ public class PolarisTestMetaStoreManager {
     PolarisEntity refEntity =
         PolarisEntity.of(
             this.polarisMetaStoreManager.loadEntity(
-                this.polarisCallContext, entity.getCatalogId(), entity.getId()));
+                this.polarisCallContext, entity.getCatalogId(), entity.getId(), entity.getType()));
     Assertions.assertThat(refEntity).isNotNull();
 
     // same entity
@@ -1245,7 +1293,7 @@ public class PolarisTestMetaStoreManager {
     // reload the grants
     List<PolarisGrantRecord> refGrantRecords = new ArrayList<>();
     if (refEntity.getType().isGrantee()) {
-      PolarisMetaStoreManager.LoadGrantsResult loadGrantResult =
+      LoadGrantsResult loadGrantResult =
           this.polarisMetaStoreManager.loadGrantsToGrantee(
               this.polarisCallContext, refEntity.getCatalogId(), refEntity.getId());
       this.validateLoadedGrants(loadGrantResult, true);
@@ -1257,7 +1305,7 @@ public class PolarisTestMetaStoreManager {
       refGrantRecords.addAll(loadGrantResult.getGrantRecords());
     }
 
-    PolarisMetaStoreManager.LoadGrantsResult loadGrantResult =
+    LoadGrantsResult loadGrantResult =
         this.polarisMetaStoreManager.loadGrantsOnSecurable(
             this.polarisCallContext, refEntity.getCatalogId(), refEntity.getId());
     this.validateLoadedGrants(loadGrantResult, false);
@@ -1278,9 +1326,10 @@ public class PolarisTestMetaStoreManager {
    * @param cacheEntry the cached entity to validate
    */
   private void validateCacheEntryRefresh(
-      PolarisMetaStoreManager.CachedEntryResult cacheEntry,
+      ResolvedEntityResult cacheEntry,
       long catalogId,
       long entityId,
+      PolarisEntityType entityType,
       int entityVersion,
       int entityGrantRecordsVersion) {
     // cannot be null
@@ -1291,12 +1340,12 @@ public class PolarisTestMetaStoreManager {
     // reload the entity
     PolarisBaseEntity refEntity =
         this.polarisMetaStoreManager
-            .loadEntity(this.polarisCallContext, catalogId, entityId)
+            .loadEntity(this.polarisCallContext, catalogId, entityId, entityType)
             .getEntity();
     Assertions.assertThat(refEntity).isNotNull();
 
     // reload the grants
-    PolarisMetaStoreManager.LoadGrantsResult loadGrantResult =
+    LoadGrantsResult loadGrantResult =
         refEntity.getType().isGrantee()
             ? this.polarisMetaStoreManager.loadGrantsToGrantee(
                 this.polarisCallContext, catalogId, entityId)
@@ -1349,12 +1398,12 @@ public class PolarisTestMetaStoreManager {
   private PolarisBaseEntity loadCacheEntryByName(
       long entityCatalogId,
       long parentId,
-      @NotNull PolarisEntityType entityType,
-      @NotNull String entityName,
+      @Nonnull PolarisEntityType entityType,
+      @Nonnull String entityName,
       boolean expectExists) {
     // load cached entry
-    PolarisMetaStoreManager.CachedEntryResult cacheEntry =
-        this.polarisMetaStoreManager.loadCachedEntryByName(
+    ResolvedEntityResult cacheEntry =
+        this.polarisMetaStoreManager.loadResolvedEntityByName(
             this.polarisCallContext, entityCatalogId, parentId, entityType, entityName);
 
     // if null, validate that indeed the entry does not exist
@@ -1382,8 +1431,8 @@ public class PolarisTestMetaStoreManager {
   private PolarisBaseEntity loadCacheEntryByName(
       long entityCatalogId,
       long parentId,
-      @NotNull PolarisEntityType entityType,
-      @NotNull String entityName) {
+      @Nonnull PolarisEntityType entityType,
+      @Nonnull String entityName) {
     return this.loadCacheEntryByName(entityCatalogId, parentId, entityType, entityName, true);
   }
 
@@ -1397,11 +1446,11 @@ public class PolarisTestMetaStoreManager {
    * @return return just the entity
    */
   private PolarisBaseEntity loadCacheEntryById(
-      long entityCatalogId, long entityId, boolean expectExists) {
+      long entityCatalogId, long entityId, PolarisEntityType entityType, boolean expectExists) {
     // load cached entry
-    PolarisMetaStoreManager.CachedEntryResult cacheEntry =
-        this.polarisMetaStoreManager.loadCachedEntryById(
-            this.polarisCallContext, entityCatalogId, entityId);
+    ResolvedEntityResult cacheEntry =
+        this.polarisMetaStoreManager.loadResolvedEntityById(
+            this.polarisCallContext, entityCatalogId, entityId, entityType);
 
     // if null, validate that indeed the entry does not exist
     Assertions.assertThat(cacheEntry.isSuccess()).isEqualTo(expectExists);
@@ -1423,8 +1472,9 @@ public class PolarisTestMetaStoreManager {
    * @param entityId parent id of the entity
    * @return return just the entity
    */
-  private PolarisBaseEntity loadCacheEntryById(long entityCatalogId, long entityId) {
-    return this.loadCacheEntryById(entityCatalogId, entityId, true);
+  private PolarisBaseEntity loadCacheEntryById(
+      long entityCatalogId, long entityId, PolarisEntityType entityType) {
+    return this.loadCacheEntryById(entityCatalogId, entityId, entityType, true);
   }
 
   /**
@@ -1446,8 +1496,8 @@ public class PolarisTestMetaStoreManager {
       long entityId,
       boolean expectExists) {
     // load cached entry
-    PolarisMetaStoreManager.CachedEntryResult cacheEntry =
-        this.polarisMetaStoreManager.refreshCachedEntity(
+    ResolvedEntityResult cacheEntry =
+        this.polarisMetaStoreManager.refreshResolvedEntity(
             this.polarisCallContext,
             entityVersion,
             entityGrantRecordsVersion,
@@ -1461,7 +1511,12 @@ public class PolarisTestMetaStoreManager {
     // if not null, validate it
     if (cacheEntry.isSuccess()) {
       this.validateCacheEntryRefresh(
-          cacheEntry, entityCatalogId, entityId, entityVersion, entityGrantRecordsVersion);
+          cacheEntry,
+          entityCatalogId,
+          entityId,
+          entityType,
+          entityVersion,
+          entityGrantRecordsVersion);
     }
   }
 
@@ -1478,7 +1533,7 @@ public class PolarisTestMetaStoreManager {
   private void refreshCacheEntry(
       int entityVersion,
       int entityGrantRecordsVersion,
-      @NotNull PolarisEntityType entityType,
+      @Nonnull PolarisEntityType entityType,
       long entityCatalogId,
       long entityId) {
     // refresh cached entry
@@ -1489,7 +1544,7 @@ public class PolarisTestMetaStoreManager {
   /** validate that the root catalog was properly constructed */
   void validateBootstrap() {
     // load all principals
-    List<PolarisEntityActiveRecord> principals =
+    List<EntityNameLookupRecord> principals =
         polarisMetaStoreManager
             .listEntities(
                 this.polarisCallContext,
@@ -1502,7 +1557,7 @@ public class PolarisTestMetaStoreManager {
     Assertions.assertThat(principals).isNotNull().hasSize(1);
 
     // get catalog list information
-    PolarisEntityActiveRecord principalListInfo = principals.get(0);
+    EntityNameLookupRecord principalListInfo = principals.get(0);
 
     // now make sure this principal was properly persisted
     PolarisBaseEntity principal =
@@ -1515,7 +1570,7 @@ public class PolarisTestMetaStoreManager {
             PolarisEntitySubType.NULL_SUBTYPE);
 
     // load all principal roles
-    List<PolarisEntityActiveRecord> principalRoles =
+    List<EntityNameLookupRecord> principalRoles =
         polarisMetaStoreManager
             .listEntities(
                 this.polarisCallContext,
@@ -1528,7 +1583,7 @@ public class PolarisTestMetaStoreManager {
     Assertions.assertThat(principalRoles).isNotNull().hasSize(1);
 
     // get catalog list information
-    PolarisEntityActiveRecord roleListInfo = principalRoles.get(0);
+    EntityNameLookupRecord roleListInfo = principalRoles.get(0);
 
     // now make sure this principal role was properly persisted
     PolarisBaseEntity principalRole =
@@ -1921,7 +1976,7 @@ public class PolarisTestMetaStoreManager {
     this.dropEntity(null, catalog);
 
     // catalog exists
-    PolarisMetaStoreManager.EntityResult catalogFound =
+    EntityResult catalogFound =
         polarisMetaStoreManager.readEntityByName(
             this.polarisCallContext,
             null,
@@ -1963,7 +2018,7 @@ public class PolarisTestMetaStoreManager {
             "test");
     // success and not found
     Assertions.assertThat(catalogFound.getReturnStatus())
-        .isEqualTo(PolarisMetaStoreManager.ReturnStatus.ENTITY_NOT_FOUND);
+        .isEqualTo(BaseResult.ReturnStatus.ENTITY_NOT_FOUND);
 
     // drop the principal role PR1
     PolarisBaseEntity PR1 = this.ensureExistsByName(null, PolarisEntityType.PRINCIPAL_ROLE, "PR1");
@@ -2043,7 +2098,7 @@ public class PolarisTestMetaStoreManager {
     // assign catalog role to PR9000
     grantToGrantee(catalog, R1, PR9000, PolarisPrivilege.CATALOG_ROLE_USAGE);
 
-    PolarisMetaStoreManager.LoadGrantsResult loadGrantsResult =
+    LoadGrantsResult loadGrantsResult =
         polarisMetaStoreManager.loadGrantsToGrantee(this.polarisCallContext, 0L, PR9000.getId());
     this.validateLoadedGrants(loadGrantsResult, true);
     Assertions.assertThat(loadGrantsResult.getGrantRecords()).hasSize(1);
@@ -2078,15 +2133,15 @@ public class PolarisTestMetaStoreManager {
     // the renamed entity
     PolarisEntity renamedEntityInput = new PolarisEntity(entity);
     renamedEntityInput.setName(newName);
-    String updatedInternalPropertiesString = "updatedDataForInternalProperties1234";
-    String updatedPropertiesString = "updatedDataForProperties9876";
+    String updatedInternalPropertiesString = "{\"key1\": \"updatedDataForInternalProperties1234\"}";
+    String updatedPropertiesString = "{\"key1\": \"updatedDataForProperties9876\"}";
 
     // this is to test that properties are also updated during the rename operation
     renamedEntityInput.setInternalProperties(updatedInternalPropertiesString);
     renamedEntityInput.setProperties(updatedPropertiesString);
 
     // check to see if we would have a name conflict
-    PolarisMetaStoreManager.EntityResult newNameLookup =
+    EntityResult newNameLookup =
         polarisMetaStoreManager.readEntityByName(
             polarisCallContext,
             newCatPath == null ? catPath : newCatPath,
@@ -2101,7 +2156,7 @@ public class PolarisTestMetaStoreManager {
             .getEntity();
 
     // ensure success
-    if (newNameLookup.getReturnStatus() == PolarisMetaStoreManager.ReturnStatus.ENTITY_NOT_FOUND) {
+    if (newNameLookup.getReturnStatus() == BaseResult.ReturnStatus.ENTITY_NOT_FOUND) {
       Assertions.assertThat(renamedEntity).isNotNull();
 
       // ensure it exists
@@ -2121,13 +2176,13 @@ public class PolarisTestMetaStoreManager {
       Assertions.assertThat(renamedEntityOut.getProperties()).isEqualTo(updatedPropertiesString);
 
       // ensure the old one is gone
-      PolarisMetaStoreManager.EntityResult res =
+      EntityResult res =
           polarisMetaStoreManager.readEntityByName(
               polarisCallContext, catPath, entity.getType(), entity.getSubType(), oldName);
 
       // not found
       Assertions.assertThat(res.getReturnStatus())
-          .isEqualTo(PolarisMetaStoreManager.ReturnStatus.ENTITY_NOT_FOUND);
+          .isEqualTo(BaseResult.ReturnStatus.ENTITY_NOT_FOUND);
     } else {
       // cannot rename since the entity exists
       Assertions.assertThat(renamedEntity).isNull();
@@ -2212,7 +2267,7 @@ public class PolarisTestMetaStoreManager {
             "test");
 
     // and again by id
-    TEST = this.loadCacheEntryById(TEST.getCatalogId(), TEST.getId());
+    TEST = this.loadCacheEntryById(TEST.getCatalogId(), TEST.getId(), TEST.getType());
 
     // get namespace N1
     PolarisBaseEntity N1 =
@@ -2250,7 +2305,7 @@ public class PolarisTestMetaStoreManager {
     // load role R1
     PolarisBaseEntity R1 =
         this.loadCacheEntryByName(TEST.getId(), TEST.getId(), PolarisEntityType.CATALOG_ROLE, "R1");
-    R1 = this.loadCacheEntryById(R1.getCatalogId(), R1.getId());
+    R1 = this.loadCacheEntryById(R1.getCatalogId(), R1.getId(), R1.getType());
 
     // add a grant record to N1
     this.grantPrivilege(R1, List.of(TEST), N1, PolarisPrivilege.NAMESPACE_FULL_METADATA);
@@ -2277,7 +2332,7 @@ public class PolarisTestMetaStoreManager {
     // now validate that load something which does not exist, will also work
     this.loadCacheEntryByName(
         N1.getCatalogId(), N1.getId(), PolarisEntityType.TABLE_LIKE, "do_not_exists", false);
-    this.loadCacheEntryById(N1.getCatalogId() + 1000, N1.getId(), false);
+    this.loadCacheEntryById(N1.getCatalogId() + 1000, N1.getId(), N1.getType(), false);
 
     // refresh a purged entity
     this.refreshCacheEntry(

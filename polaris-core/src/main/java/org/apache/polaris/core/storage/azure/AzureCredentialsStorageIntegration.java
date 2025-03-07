@@ -35,6 +35,7 @@ import com.azure.storage.file.datalake.DataLakeServiceClientBuilder;
 import com.azure.storage.file.datalake.models.DataLakeStorageException;
 import com.azure.storage.file.datalake.sas.DataLakeServiceSasSignatureValues;
 import com.azure.storage.file.datalake.sas.PathSasPermission;
+import jakarta.annotation.Nonnull;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.Period;
@@ -44,11 +45,10 @@ import java.util.EnumMap;
 import java.util.HashSet;
 import java.util.Objects;
 import java.util.Set;
+import org.apache.polaris.core.PolarisConfiguration;
 import org.apache.polaris.core.PolarisDiagnostics;
 import org.apache.polaris.core.storage.InMemoryStorageIntegration;
 import org.apache.polaris.core.storage.PolarisCredentialProperty;
-import org.apache.polaris.core.storage.PolarisStorageConfigurationInfo;
-import org.jetbrains.annotations.NotNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import reactor.core.publisher.Mono;
@@ -71,11 +71,11 @@ public class AzureCredentialsStorageIntegration
 
   @Override
   public EnumMap<PolarisCredentialProperty, String> getSubscopedCreds(
-      @NotNull PolarisDiagnostics diagnostics,
-      @NotNull AzureStorageConfigurationInfo storageConfig,
+      @Nonnull PolarisDiagnostics diagnostics,
+      @Nonnull AzureStorageConfigurationInfo storageConfig,
       boolean allowListOperation,
-      @NotNull Set<String> allowedReadLocations,
-      @NotNull Set<String> allowedWriteLocations) {
+      @Nonnull Set<String> allowedReadLocations,
+      @Nonnull Set<String> allowedWriteLocations) {
     EnumMap<PolarisCredentialProperty, String> credentialMap =
         new EnumMap<>(PolarisCredentialProperty.class);
     String loc =
@@ -125,8 +125,15 @@ public class AzureCredentialsStorageIntegration
     // Azure strictly requires the end time to be <= 7 days from the current time, -1 min to avoid
     // clock skew between the client and server,
     OffsetDateTime startTime = start.truncatedTo(ChronoUnit.SECONDS).atOffset(ZoneOffset.UTC);
-    OffsetDateTime sanitizedEndTime =
+    int intendedDurationSeconds =
+        PolarisConfiguration.loadConfig(PolarisConfiguration.STORAGE_CREDENTIAL_DURATION_SECONDS);
+    OffsetDateTime intendedEndTime =
+        start.plusSeconds(intendedDurationSeconds).atOffset(ZoneOffset.UTC);
+    OffsetDateTime maxAllowedEndTime =
         start.plus(Period.ofDays(7)).minusSeconds(60).atOffset(ZoneOffset.UTC);
+    OffsetDateTime sanitizedEndTime =
+        intendedEndTime.isBefore(maxAllowedEndTime) ? intendedEndTime : maxAllowedEndTime;
+
     LOGGER
         .atDebug()
         .addKeyValue("allowedListAction", allowListOperation)
@@ -165,6 +172,9 @@ public class AzureCredentialsStorageIntegration
     }
     credentialMap.put(PolarisCredentialProperty.AZURE_SAS_TOKEN, sasToken);
     credentialMap.put(PolarisCredentialProperty.AZURE_ACCOUNT_HOST, storageDnsName);
+    credentialMap.put(
+        PolarisCredentialProperty.EXPIRATION_TIME,
+        String.valueOf(sanitizedEndTime.toInstant().toEpochMilli()));
     return credentialMap;
   }
 
@@ -272,11 +282,5 @@ public class AzureCredentialsStorageIntegration
       throw new RuntimeException("No access token fetched!");
     }
     return accessToken;
-  }
-
-  @Override
-  public EnumMap<PolarisStorageConfigurationInfo.DescribeProperty, String>
-      descPolarisStorageConfiguration(@NotNull PolarisStorageConfigurationInfo storageConfigInfo) {
-    return null;
   }
 }

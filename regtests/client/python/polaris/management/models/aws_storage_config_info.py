@@ -52,6 +52,8 @@ class AwsStorageConfigInfo(StorageConfigInfo):
                                              alias="externalId")
     user_arn: Optional[StrictStr] = Field(default=None, description="the aws user arn used to assume the aws role",
                                           alias="userArn")
+    region: Optional[StrictStr] = Field(default=None, description="the aws region where data is stored",
+                                          alias="region")
     __properties: ClassVar[List[str]] = ["storageType", "allowedLocations"]
 
     model_config = ConfigDict(
@@ -103,9 +105,14 @@ class AwsStorageConfigInfo(StorageConfigInfo):
         if not isinstance(obj, dict):
             return cls.model_validate(obj)
 
+        # IMPORTANT: The following may require manual repair to add subtype-specific properties
+        # after using the OpenAPI Generator.
         _obj = cls.model_validate({
             "storageType": obj.get("storageType"),
             "allowedLocations": obj.get("allowedLocations"),
-            "roleArn": obj.get("roleArn")
+            "roleArn": obj.get("roleArn"),
+            "externalId": obj.get("externalId"),
+            "userArn": obj.get("userArn"),
+            "region": obj.get("region")
         })
         return _obj

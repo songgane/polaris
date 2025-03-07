@@ -37,11 +37,14 @@ class Parser(object):
     """
 
     _ROOT_ARGUMENTS = [
-        Argument(Arguments.HOST, str, hint='hostname', default='localhost'),
-        Argument(Arguments.PORT, int, hint='port', default=8181),
+        Argument(Arguments.HOST, str, hint='hostname'),
+        Argument(Arguments.PORT, int, hint='port'),
+        Argument(Arguments.BASE_URL, str, hint='complete base URL instead of hostname:port'),
         Argument(Arguments.CLIENT_ID, str, hint='client ID for token-based authentication'),
         Argument(Arguments.CLIENT_SECRET, str, hint='client secret for token-based authentication'),
         Argument(Arguments.ACCESS_TOKEN, str, hint='access token for token-based authentication'),
+        Argument(Arguments.PROFILE, str, hint='profile for token-based authentication'),
+        Argument(Arguments.PROXY, str, hint='proxy URL'),
     ]
 
     @staticmethod
@@ -102,7 +105,7 @@ class Parser(object):
             if '=' not in property:
                 raise Exception(f'Could not parse property `{property}`')
             key, value = property.split('=', 1)
-            if '=' in value or not value:
+            if not value:
                 raise Exception(f'Could not parse property `{property}`')
             if key in results:
                 raise Exception(f'Duplicate property key `{key}`')

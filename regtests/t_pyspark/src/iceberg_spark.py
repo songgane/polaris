@@ -46,7 +46,7 @@ class IcebergSparkSession:
       aws_region: str = "us-west-2",
       catalog_name: str = None,
       polaris_url: str = None,
-      realm: str = 'default-realm'
+      realm: str = 'POLARIS'
   ):
     """Constructor for Iceberg Spark session. Sets the member variables."""
     self.bearer_token = bearer_token
@@ -72,7 +72,7 @@ class IcebergSparkSession:
     """Initial method for Iceberg Spark session. Creates a Spark session with specified configs.
     """
     packages = [
-      "org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.5.2",
+      "org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.7.1",
       "org.apache.hadoop:hadoop-aws:3.4.0",
       "software.amazon.awssdk:bundle:2.23.19",
       "software.amazon.awssdk:url-connection-client:2.23.19",

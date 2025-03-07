@@ -21,6 +21,7 @@ package org.apache.polaris.core.storage.cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.github.benmanes.caffeine.cache.Expiry;
 import com.github.benmanes.caffeine.cache.LoadingCache;
+import jakarta.annotation.Nonnull;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -28,10 +29,10 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 import org.apache.iceberg.exceptions.UnprocessableEntityException;
 import org.apache.polaris.core.PolarisCallContext;
+import org.apache.polaris.core.PolarisConfiguration;
 import org.apache.polaris.core.entity.PolarisEntity;
 import org.apache.polaris.core.entity.PolarisEntityType;
-import org.apache.polaris.core.persistence.PolarisMetaStoreManager;
-import org.jetbrains.annotations.NotNull;
+import org.apache.polaris.core.storage.PolarisCredentialVendor;
 import org.jetbrains.annotations.VisibleForTesting;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -41,11 +42,10 @@ public class StorageCredentialCache {
 
   private static final Logger LOGGER = LoggerFactory.getLogger(StorageCredentialCache.class);
 
-  private static final long CACHE_MAX_DURATION_MS = 30 * 60 * 1000L; // 30 minutes
   private static final long CACHE_MAX_NUMBER_OF_ENTRIES = 10_000L;
   private final LoadingCache<StorageCredentialCacheKey, StorageCredentialCacheEntry> cache;
 
-  /** Initialize the creds cache, max cache duration is half an hr. */
+  /** Initialize the creds cache */
   public StorageCredentialCache() {
     cache =
         Caffeine.newBuilder()
@@ -62,7 +62,7 @@ public class StorageCredentialCache {
                             0,
                             Math.min(
                                 (entry.getExpirationTime() - System.currentTimeMillis()) / 2,
-                                CACHE_MAX_DURATION_MS));
+                                maxCacheDurationMs()));
                     return TimeUnit.MILLISECONDS.toNanos(expireAfterMillis);
                   }
 
@@ -91,10 +91,28 @@ public class StorageCredentialCache {
                 });
   }
 
+  /** How long credentials should remain in the cache. */
+  private static long maxCacheDurationMs() {
+    var cacheDurationSeconds =
+        PolarisConfiguration.loadConfig(
+            PolarisConfiguration.STORAGE_CREDENTIAL_CACHE_DURATION_SECONDS);
+    var credentialDurationSeconds =
+        PolarisConfiguration.loadConfig(PolarisConfiguration.STORAGE_CREDENTIAL_DURATION_SECONDS);
+    if (cacheDurationSeconds >= credentialDurationSeconds) {
+      throw new IllegalArgumentException(
+          String.format(
+              "%s should be less than %s",
+              PolarisConfiguration.STORAGE_CREDENTIAL_CACHE_DURATION_SECONDS.key,
+              PolarisConfiguration.STORAGE_CREDENTIAL_DURATION_SECONDS.key));
+    } else {
+      return cacheDurationSeconds * 1000L;
+    }
+  }
+
   /**
    * Either get from the cache or generate a new entry for a scoped creds
    *
-   * @param metaStoreManager the meta storage manager used to generate a new scoped creds if needed
+   * @param credentialVendor the credential vendor used to generate a new scoped creds if needed
    * @param callCtx the call context
    * @param polarisEntity the polaris entity that is going to scoped creds
    * @param allowListOperation whether allow list action on the provided read and write locations
@@ -103,12 +121,12 @@ public class StorageCredentialCache {
    * @return the a map of string containing the scoped creds information
    */
   public Map<String, String> getOrGenerateSubScopeCreds(
-      @NotNull PolarisMetaStoreManager metaStoreManager,
-      @NotNull PolarisCallContext callCtx,
-      @NotNull PolarisEntity polarisEntity,
+      @Nonnull PolarisCredentialVendor credentialVendor,
+      @Nonnull PolarisCallContext callCtx,
+      @Nonnull PolarisEntity polarisEntity,
       boolean allowListOperation,
-      @NotNull Set<String> allowedReadLocations,
-      @NotNull Set<String> allowedWriteLocations) {
+      @Nonnull Set<String> allowedReadLocations,
+      @Nonnull Set<String> allowedWriteLocations) {
     if (!isTypeSupported(polarisEntity.getType())) {
       callCtx
           .getDiagServices()
@@ -125,11 +143,12 @@ public class StorageCredentialCache {
     Function<StorageCredentialCacheKey, StorageCredentialCacheEntry> loader =
         k -> {
           LOGGER.atDebug().log("StorageCredentialCache::load");
-          PolarisMetaStoreManager.ScopedCredentialsResult scopedCredentialsResult =
-              metaStoreManager.getSubscopedCredsForEntity(
+          PolarisCredentialVendor.ScopedCredentialsResult scopedCredentialsResult =
+              credentialVendor.getSubscopedCredsForEntity(
                   k.getCallContext(),
                   k.getCatalogId(),
                   k.getEntityId(),
+                  polarisEntity.getType(),
                   k.isAllowedListAction(),
                   k.getAllowedReadLocations(),
                   k.getAllowedWriteLocations());

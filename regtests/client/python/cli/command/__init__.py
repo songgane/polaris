@@ -38,6 +38,8 @@ class Command(ABC):
             return f(getattr(options, key)) if hasattr(options, key) else None
 
         properties = Parser.parse_properties(options_get(Arguments.PROPERTY))
+        set_properties = Parser.parse_properties(options_get(Arguments.SET_PROPERTY))
+        remove_properties = options_get(Arguments.REMOVE_PROPERTY)
 
         command = None
         if options.command == Commands.CATALOGS:
@@ -52,12 +54,15 @@ class Command(ABC):
                 role_arn=options_get(Arguments.ROLE_ARN),
                 external_id=options_get(Arguments.EXTERNAL_ID),
                 user_arn=options_get(Arguments.USER_ARN),
+                region=options_get(Arguments.REGION),
                 tenant_id=options_get(Arguments.TENANT_ID),
                 multi_tenant_app_name=options_get(Arguments.MULTI_TENANT_APP_NAME),
                 consent_url=options_get(Arguments.CONSENT_URL),
                 service_account=options_get(Arguments.SERVICE_ACCOUNT),
                 catalog_name=options_get(Arguments.CATALOG),
-                properties={} if properties is None else properties
+                properties={} if properties is None else properties,
+                set_properties={} if set_properties is None else set_properties,
+                remove_properties=[] if remove_properties is None else remove_properties
             )
         elif options.command == Commands.PRINCIPALS:
             from cli.command.principals import PrincipalsCommand
@@ -67,7 +72,9 @@ class Command(ABC):
                 principal_name=options_get(Arguments.PRINCIPAL),
                 client_id=options_get(Arguments.CLIENT_ID),
                 principal_role=options_get(Arguments.PRINCIPAL_ROLE),
-                properties=properties
+                properties={} if properties is None else properties,
+                set_properties={} if set_properties is None else set_properties,
+                remove_properties=[] if remove_properties is None else remove_properties
             )
         elif options.command == Commands.PRINCIPAL_ROLES:
             from cli.command.principal_roles import PrincipalRolesCommand
@@ -77,7 +84,9 @@ class Command(ABC):
                 principal_name=options_get(Arguments.PRINCIPAL),
                 catalog_name=options_get(Arguments.CATALOG),
                 catalog_role_name=options_get(Arguments.CATALOG_ROLE),
-                properties=properties
+                properties={} if properties is None else properties,
+                set_properties={} if set_properties is None else set_properties,
+                remove_properties=[] if remove_properties is None else remove_properties
             )
         elif options.command == Commands.CATALOG_ROLES:
             from cli.command.catalog_roles import CatalogRolesCommand
@@ -86,7 +95,9 @@ class Command(ABC):
                 catalog_name=options_get(Arguments.CATALOG),
                 catalog_role_name=options_get(Arguments.CATALOG_ROLE),
                 principal_role_name=options_get(Arguments.PRINCIPAL_ROLE),
-                properties=properties
+                properties={} if properties is None else properties,
+                set_properties={} if set_properties is None else set_properties,
+                remove_properties=[] if remove_properties is None else remove_properties
             )
         elif options.command == Commands.PRIVILEGES:
             from cli.command.privileges import PrivilegesCommand
@@ -112,6 +123,13 @@ class Command(ABC):
                 parent=options_get(Arguments.PARENT, lambda s: s.split('.') if s else None),
                 location=options_get(Arguments.LOCATION),
                 properties=properties
+            )
+        elif options.command == Commands.PROFILES:
+            from cli.command.profiles import ProfilesCommand
+            subcommand = options_get(f'{Commands.PROFILES}_subcommand')
+            command = ProfilesCommand(
+                subcommand,
+                profile_name=options_get(Arguments.PROFILE)
             )
 
         if command is not None:
