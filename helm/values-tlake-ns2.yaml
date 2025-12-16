@@ -362,7 +362,22 @@ advancedConfig:
 # https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.27/#envvar-v1-core
 # This can be useful to get configuration values from Kubernetes secrets or config maps.
 extraEnv:
-  []
+  - name: AWS_ACCESS_KEY_ID
+    value: minioadmin
+  - name: AWS_SECRET_ACCESS_KEY
+    value: minioadmin
+  - name: AWS_REGION
+    value: tlake-ns2
+  - name: AWS_ENDPOINT_URL_S3
+    value: http://10.10.27.27:9000
+  - name: AWS_ENDPOINT_URL_STS
+    value: http://10.10.27.27:9000
+  - name: POLARIS_BOOTSTRAP_CREDENTIALS
+    value: polaris,root,secret
+  - name: polaris.features.DROP_WITH_PURGE_ENABLED
+    value: "true" # allow dropping tables from the SQL client
+  - name: polaris.realm-context.realms
+    value: polaris
 #  - name: AWS_STORAGE_BUCKET
 #    value: s3://xxxxx/
 #  - name: AWS_ACCESS_KEY_ID
@@ -518,15 +533,16 @@ realmContext:
   # -- List of valid realms, for use with the default realm context resolver. The first realm in
   # the list is the default realm. Realms not in this list will be rejected.
   realms:
-    - POLARIS
+    - polaris
+    - tlake-ns2
 
 # -- Polaris features configuration.
 features:
   # -- Features to enable or disable globally. If a feature is not present in the map, the default
   # built-in value is used.
-  # ENFORCE_PRINCIPAL_CREDENTIAL_ROTATION_REQUIRED_CHECKING: false
-  # SUPPORTED_CATALOG_STORAGE_TYPES:
-  #   - S3
+  ENFORCE_PRINCIPAL_CREDENTIAL_ROTATION_REQUIRED_CHECKING: false
+  SUPPORTED_CATALOG_STORAGE_TYPES:
+    - S3
   #   - GCS
   #   - AZURE
   #   - FILE
